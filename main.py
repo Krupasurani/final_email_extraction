@@ -104,7 +104,7 @@ class AIEmailDiscoveryPipeline:
         # AI Decision tracking
         self.decisions_log = []
 
-        # Store people directory URL from Stage 3 for use in Stage 4
+        # Store people directory URL from Stage 3 for Stage 4
         self.people_directory_url = None
 
         logger.info("🤖 REVISED AI-Driven Email Discovery Pipeline Initialized")
@@ -831,14 +831,14 @@ Return JSON:
         logger.info(f"Purpose: {context.purpose.upper()}")
         logger.info(f"{'='*80}")
 
-        # First, find and store the people directory URL for use in Stage 4
+        # Find and store people directory URL for Stage 4
         self.people_directory_url = await self.find_people_section(base_url)
-        if not self.people_directory_url:
-            self.people_directory_url = base_url  # Fallback to base URL
-            logger.warning(f"   ⚠️ Could not find people directory, using base URL")
-        else:
+        if self.people_directory_url:
             logger.info(f"   ✅ Found people directory: {self.people_directory_url}")
-    
+        else:
+            logger.warning(f"   ⚠️ Could not find people directory, using base URL")
+            self.people_directory_url = base_url
+
         # -------------------------------------------------------------
         # CASE A – Attorney name explicitly provided
         # -------------------------------------------------------------
@@ -1210,10 +1210,10 @@ Return UP TO 2 professionals. If none found, return empty array."""
                                    context: SearchContext, professionals: List[Dict]) -> Dict:
         """
         STAGE 4 & 5: Email extraction using Universal Email Agent v5
-        Uses the people directory URL found in Stage 3 for more targeted extraction.
+        Uses the people directory URL found in Stage 3.
         """
-        # Use the directory URL found in Stage 3, or fall back to base_url
-        search_url = self.people_directory_url or base_url
+        # Use the directory URL stored from Stage 3, fallback to base_url
+        search_url = self.people_directory_url if self.people_directory_url else base_url
 
         logger.info(f"📬 Stage 4+5: Using Universal Email Agent v5")
         logger.info(f"   Directory URL: {search_url}")
