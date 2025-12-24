@@ -1199,9 +1199,10 @@ Return UP TO 2 professionals. If none found, return empty array."""
                                    context: SearchContext, professionals: List[Dict]) -> Dict:
         """
         REPLACED STAGE 4 & 5:
-        Uses imported external email extractor logic instead of built-in crawling.
+        Uses Universal Email Agent v5 for email extraction.
+        Now uses the profile URL or people directory URL found in Stage 3!
         """
-        logger.info(f"📬 Stage 4+5: Using imported Smart Email Finder module")
+        logger.info(f"📬 Stage 4+5: Using Universal Email Agent v5")
 
         result = {
             'personal_email': None,
@@ -1211,7 +1212,13 @@ Return UP TO 2 professionals. If none found, return empty array."""
 
         # Priority 1: If attorney name provided
         if entity.attorney_name:
-            email_data = await self.external_email_extractor(base_url, entity.attorney_name)
+            # Use profile URL if available, otherwise use base URL
+            target_url = base_url
+            if professionals and professionals[0].get('profile_url'):
+                target_url = professionals[0].get('profile_url')
+                logger.info(f"   Using profile URL: {target_url}")
+
+            email_data = await self.external_email_extractor(target_url, entity.attorney_name)
             if email_data.get('email'):
                 result['personal_email'] = email_data
                 return result
@@ -1222,7 +1229,13 @@ Return UP TO 2 professionals. If none found, return empty array."""
                 name = prof.get('name')
                 if not name:
                     continue
-                email_data = await self.external_email_extractor(base_url, name)
+
+                # Use the profile URL if available, otherwise use base URL
+                target_url = prof.get('profile_url') or base_url
+                if prof.get('profile_url'):
+                    logger.info(f"   Using profile URL for {name}: {target_url}")
+
+                email_data = await self.external_email_extractor(target_url, name)
                 if email_data.get('email'):
                     result['personal_email'] = email_data
                     return result
