@@ -816,18 +816,29 @@ Return JSON:
     
     async def ai_identify_professionals(
         self, base_url: str, entity: EntityData, context: SearchContext
-    ) -> List[Dict]:
+    ) -> tuple[List[Dict], str]:
         """
         Stage 3 intelligently chooses between two routes:
           A. Attorney name provided  → find exact profile
           B. No attorney name        → identify relevant professional(s)
+
+        Returns:
+            (professionals_list, people_directory_url)
         """
-    
+
         logger.info(f"\n{'='*80}")
         logger.info("STAGE 3: PROFESSIONAL IDENTIFICATION")
         logger.info(f"Purpose: {context.purpose.upper()}")
         logger.info(f"{'='*80}")
-    
+
+        # First, try to find the people directory
+        people_directory_url = await self.find_people_section(base_url)
+        if not people_directory_url:
+            people_directory_url = base_url
+            logger.warning(f"   ⚠️ Could not find people directory, using base URL")
+        else:
+            logger.info(f"   ✅ Found people directory: {people_directory_url}")
+
         # -------------------------------------------------------------
         # CASE A – Attorney name explicitly provided
         # -------------------------------------------------------------
@@ -835,7 +846,7 @@ Return JSON:
             name = entity.attorney_name.strip()
             logger.info(f"   Case A: Attorney name provided → {name}")
             logger.info(f"   Searching directly for profile...")
-    
+
             profile_url = await self.search_attorney_profile(base_url, entity)
             if profile_url:
                 logger.info(f"   ✅ Found attorney profile: {profile_url}")
@@ -845,29 +856,29 @@ Return JSON:
                     "designation": "Provided Attorney",
                     "practice_area": context.purpose,
                     "search_method": "direct_profile_search"
-                }]
+                }], people_directory_url
             else:
                 logger.warning("   ⚠️ Attorney profile not found; stopping at Stage 3 for this record.")
                 # If we really want a fallback, uncomment below line:
                 # return await self.find_relevant_professionals(base_url, entity, context)
-                return []  # no further guessing when attorney given but not found
-    
+                return [], people_directory_url  # no further guessing when attorney given but not found
+
         # -------------------------------------------------------------
         # CASE B – No attorney name: discover relevant professionals
         # -------------------------------------------------------------
         logger.info(f"   Case B: No attorney name provided → discover by purpose: {context.purpose}")
         logger.info(f"   Target practice areas: {', '.join(context.target_practice_areas)}")
         logger.info(f"   Target designations: {', '.join(context.preferred_designations[:3])}...")
-    
-        professionals = await self.find_relevant_professionals(base_url, entity, context)
+
+        professionals, directory_url = await self.find_relevant_professionals(base_url, entity, context)
         if professionals:
             logger.info(f"   ✅ Found {len(professionals)} relevant professional(s)")
             for i, prof in enumerate(professionals, 1):
                 logger.info(f"      [{i}] {prof.get('name', 'Unknown')} - {prof.get('designation', 'N/A')}")
         else:
             logger.warning("   ⚠️ No relevant professionals identified")
-    
-        return professionals
+
+        return professionals, directory_url
     
     
     async def search_attorney_profile(self, base_url: str, entity: EntityData) -> Optional[str]:
@@ -924,7 +935,7 @@ Return JSON:
         return None
     
     async def find_relevant_professionals(self, base_url: str, entity: EntityData,
-                                         context: SearchContext) -> List[Dict]:
+                                         context: SearchContext) -> tuple[List[Dict], str]:
         """
         Find relevant professionals when no specific attorney name provided
         Implements document logic:
@@ -933,30 +944,33 @@ Return JSON:
         - Filter by location
         - Prioritize by designation
         - Return top 2 if multiple at same level
+
+        Returns:
+            (professionals_list, people_directory_url)
         """
         logger.info(f"   🔍 Analyzing website structure...")
-        
+
         # Step 1: Find the "People" section
         people_page_url = await self.find_people_section(base_url)
-        
+
         if not people_page_url:
             logger.warning("   ⚠️ Could not locate People/Professionals section")
-            return []
-        
+            return [], base_url
+
         logger.info(f"   ✅ Found people section: {people_page_url}")
-        
+
         # Step 2: Analyze people page structure
         html = await self.fetch_page(people_page_url)
         if not html:
             logger.warning("   ⚠️ Could not load people page")
-            return []
-        
+            return [], people_page_url
+
         # Step 3: AI analyzes page and identifies professionals
         professionals = await self.ai_extract_professionals_from_page(
             html, people_page_url, entity, context
         )
-        
-        return professionals
+
+        return professionals, people_page_url
     
     async def find_people_section(self, base_url: str) -> Optional[str]:
         """
@@ -1195,14 +1209,22 @@ Return UP TO 2 professionals. If none found, return empty array."""
     # STAGE 5: INTELLIGENT CRAWLING (Priority: Profile → Homepage → Fallback)
     # ============================================================================
 
-    async def ai_intelligent_crawl(self, base_url: str, entity: EntityData,
+    async def ai_intelligent_crawl(self, directory_url: str, entity: EntityData,
                                    context: SearchContext, professionals: List[Dict]) -> Dict:
         """
-        REPLACED STAGE 4 & 5:
-        Uses Universal Email Agent v5 for email extraction.
-        Now uses the profile URL or people directory URL found in Stage 3!
+        STAGE 4 & 5: Email extraction using Universal Email Agent v5
+
+        Args:
+            directory_url: The people directory URL found in Stage 3 (e.g., /en/professionals/index.html)
+            entity: Entity data
+            context: Search context
+            professionals: List of professionals identified in Stage 3
+
+        Returns:
+            Dict with personal_email and general_email
         """
         logger.info(f"📬 Stage 4+5: Using Universal Email Agent v5")
+        logger.info(f"   Directory URL: {directory_url}")
 
         result = {
             'personal_email': None,
@@ -1212,13 +1234,8 @@ Return UP TO 2 professionals. If none found, return empty array."""
 
         # Priority 1: If attorney name provided
         if entity.attorney_name:
-            # Use profile URL if available, otherwise use base URL
-            target_url = base_url
-            if professionals and professionals[0].get('profile_url'):
-                target_url = professionals[0].get('profile_url')
-                logger.info(f"   Using profile URL: {target_url}")
-
-            email_data = await self.external_email_extractor(target_url, entity.attorney_name)
+            logger.info(f"   Searching for: {entity.attorney_name}")
+            email_data = await self.external_email_extractor(directory_url, entity.attorney_name)
             if email_data.get('email'):
                 result['personal_email'] = email_data
                 return result
@@ -1230,18 +1247,15 @@ Return UP TO 2 professionals. If none found, return empty array."""
                 if not name:
                     continue
 
-                # Use the profile URL if available, otherwise use base URL
-                target_url = prof.get('profile_url') or base_url
-                if prof.get('profile_url'):
-                    logger.info(f"   Using profile URL for {name}: {target_url}")
-
-                email_data = await self.external_email_extractor(target_url, name)
+                logger.info(f"   Searching for: {name}")
+                email_data = await self.external_email_extractor(directory_url, name)
                 if email_data.get('email'):
                     result['personal_email'] = email_data
                     return result
 
         # Priority 3: Last fallback - firm-wide search
-        email_data = await self.external_email_extractor(base_url, entity.resolved_firm_name or entity.raw_name)
+        logger.info(f"   Fallback: Searching for general firm contact")
+        email_data = await self.external_email_extractor(directory_url, entity.resolved_firm_name or entity.raw_name)
         if email_data.get('email'):
             result['general_email'] = email_data
         else:
@@ -1385,15 +1399,16 @@ Return UP TO 2 professionals. If none found, return empty array."""
         logger.info(f"✅ Verified Website: {firm_url}")
         
         # STAGE 3: Identify professionals
-        professionals = await self.ai_identify_professionals(firm_url, entity, context)
+        professionals, directory_url = await self.ai_identify_professionals(firm_url, entity, context)
         result['professionals_identified'] = professionals
-        
+        result['people_directory_url'] = directory_url
+
         # STAGE 4 & 5: Email extraction via intelligent crawl
         logger.info(f"\n{'='*80}")
         logger.info(f"STAGE 4: EMAIL EXTRACTION")
         logger.info(f"{'='*80}")
-        
-        emails = await self.ai_intelligent_crawl(firm_url, entity, context, professionals)
+
+        emails = await self.ai_intelligent_crawl(directory_url, entity, context, professionals)
         
         if emails['personal_email']:
             result['professional_email'] = emails['personal_email']
