@@ -35,8 +35,9 @@ def find_email_from_site(home_url: str, person_name: str) -> List[Dict]:
     Returns:
         List of dicts: [{'email': '...', 'url': '...', 'context': '...', 'confidence': 0.95}]
     """
-    print(f"\n🔍 Email Extraction Stage (v5)")
-    print(f"Target: {person_name} @ {home_url}")
+    print(f"\n🔍 Email Extraction Stage (Universal Email Agent v5)")
+    print(f"Target: {person_name}")
+    print(f"URL: {home_url}")
     print("=" * 70)
 
     # Create and run Universal Email Agent
